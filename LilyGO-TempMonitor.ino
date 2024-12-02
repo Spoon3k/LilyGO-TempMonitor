@@ -173,7 +173,9 @@ void markFileUpload(const String &filePath, time_t lastWriteTime) {
     }
     logFile.println(filePath + "\t" + String(lastWriteTime));
     logFile.close();
+    DEBUG_PRINT("[" + getFormattedTime() + "] Zaznamenán přenos souboru: " + filePath);
 }
+
 
 bool isFileOutdated(const String &filePath, time_t lastWriteTime) {
     File logFile = FILE_SYSTEM.open("/uploaded_files.log", FILE_READ);
@@ -234,13 +236,12 @@ bool uploadFileToFTP(const String &localPath) {
         return false;
     }
 
-    // Rozdělení cesty na adresáře a soubor
     String remotePath = localPath.startsWith("/") ? localPath.substring(1) : localPath;
     int lastSlash = remotePath.lastIndexOf('/');
     String directoryPath = remotePath.substring(0, lastSlash);
     String fileName = remotePath.substring(lastSlash + 1);
 
-    // Zajištění adresářů na FTP serveru
+    // Zajištění adresářů
     ftp.ChangeWorkDir("/");
     int start = 0;
     while (true) {
@@ -249,15 +250,14 @@ bool uploadFileToFTP(const String &localPath) {
         if (subDir.isEmpty()) break;
 
         if (!ftp.ChangeWorkDir(subDir.c_str())) {
-            ftp.InitFile("Type A");
             ftp.MakeDir(subDir.c_str());
             ftp.ChangeWorkDir(subDir.c_str());
         }
+
         if (slash == -1) break;
         start = slash + 1;
     }
 
-    // Nahrání souboru
     File file = FILE_SYSTEM.open(localPath, FILE_READ);
     if (!file) {
         DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze otevřít soubor: " + localPath);
@@ -280,9 +280,10 @@ bool uploadFileToFTP(const String &localPath) {
 
     ftp.CloseFile();
     file.close();
-    DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + localPath);
+    DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán na FTP: " + localPath);
     return true;
 }
+
 
 
 
