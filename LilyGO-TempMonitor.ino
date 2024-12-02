@@ -55,6 +55,20 @@ void initializeSD() {
     DEBUG_PRINT("[" + getFormattedTime() + "] SD karta úspěšně inicializována");
 }
 
+void clearUploadedFilesLog() {
+    if (FILE_SYSTEM.exists("/uploaded_files.log")) {
+        if (FILE_SYSTEM.remove("/uploaded_files.log")) {
+            DEBUG_PRINT("[" + getFormattedTime() + "] Soubor uploaded_files.log byl úspěšně odstraněn.");
+        } else {
+            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se odstranit soubor uploaded_files.log.");
+        }
+    } else {
+        DEBUG_PRINT("[" + getFormattedTime() + "] Soubor uploaded_files.log neexistuje, není co mazat.");
+    }
+}
+
+
+
 bool ensureDirectoryExists(const String &path) {
     if (!FILE_SYSTEM.exists(path)) {
         DEBUG_PRINT("[" + getFormattedTime() + "] Vytvářím adresář: " + path);
@@ -242,6 +256,8 @@ bool uploadFileToFTP(const String &localPath) {
     String directoryPath = remotePath.substring(0, lastSlash);
     String fileName = remotePath.substring(lastSlash + 1);
 
+    DEBUG_PRINT("[" + getFormattedTime() + "] Nahrávání souboru: " + localPath);
+
     if (!ensureFTPDirectoryExists(ftp, directoryPath)) {
         DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zajistit adresář na FTP: " + directoryPath);
         return false;
@@ -263,11 +279,13 @@ bool uploadFileToFTP(const String &localPath) {
             ftp.WriteData(buffer, bytesRead);
         }
     }
+
     ftp.CloseFile();
     file.close();
     DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán na FTP: " + localPath);
     return true;
 }
+
 
 
 void uploadAllFilesFromDirectoryWithLog(const String &baseDir) {
@@ -315,20 +333,30 @@ bool ensureFTPDirectoryExists(ESP32_FTPClient &ftp, const String &path) {
 
         DEBUG_PRINT("[" + getFormattedTime() + "] Zpracovávám adresář: " + subDir);
 
-        // Pokus o přechod do adresáře
         ftp.InitFile("Type A");
-        ftp.ChangeWorkDir(subDir.c_str());
+        ftp.ChangeWorkDir(subDir.c_str()); // Pokus o přechod
+        if (!ftp.isConnected()) {
+            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Spojení s FTP bylo ztraceno.");
+            return false;
+        }
 
-        // Vytvoření adresáře, pokud přechod selhal
+        DEBUG_PRINT("[" + getFormattedTime() + "] Přechod do adresáře: " + subDir);
+
+        // Pokud nelze přejít, pokusíme se vytvořit adresář
         ftp.MakeDir(subDir.c_str());
         ftp.ChangeWorkDir(subDir.c_str());
+        if (!ftp.isConnected()) {
+            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze vytvořit nebo přejít do adresáře: " + subDir);
+            return false;
+        }
 
-        if (slash == -1) break;
+        DEBUG_PRINT("[" + getFormattedTime() + "] Adresář vytvořen nebo již existuje: " + subDir);
+
+        if (slash == -1) break; // Konec cesty
         start = slash + 1;
     }
     return true;
 }
-
 
 void taskMonthlyRestart(void *pvParameters) {
     static int lastMonth = -1; // Uchovává hodnotu posledního měsíce
@@ -396,6 +424,10 @@ void setup() {
     initializeSD();
     connectToWiFi();
     SetupTime();
+    
+    // Vymazání logovacího souboru pro ladění (odstraňte pro produkční provoz)
+    clearUploadedFilesLog();
+
     xTaskCreatePinnedToCore(taskMonthlyRestart, "MonthlyRestart", 2048, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(taskSaveData, "SaveData", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(taskSaveChartData, "SaveChartData", 4096, NULL, 1, NULL, 1);
