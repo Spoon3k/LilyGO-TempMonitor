@@ -249,10 +249,9 @@ bool uploadFileToFTP(const String &localPath) {
         String subDir = slash == -1 ? directoryPath.substring(start) : directoryPath.substring(start, slash);
         if (subDir.isEmpty()) break;
 
-        if (!ftp.ChangeWorkDir(subDir.c_str())) {
-            ftp.MakeDir(subDir.c_str());
-            ftp.ChangeWorkDir(subDir.c_str());
-        }
+        ftp.InitFile("Type A"); // Přepnout na textový režim
+        ftp.MakeDir(subDir.c_str()); // Pokus o vytvoření adresáře
+        ftp.ChangeWorkDir(subDir.c_str()); // Přesun do adresáře
 
         if (slash == -1) break;
         start = slash + 1;
@@ -265,27 +264,20 @@ bool uploadFileToFTP(const String &localPath) {
     }
 
     size_t fileSize = file.size();
-    if (fileSize == 0) {
-        ftp.InitFile("Type A");
-        ftp.NewFile(fileName.c_str());
-    } else {
-        ftp.InitFile("Type I");
-        ftp.NewFile(fileName.c_str());
+    ftp.InitFile(fileSize == 0 ? "Type A" : "Type I"); // Typ souboru (text/binární)
+    ftp.NewFile(fileName.c_str());
+    if (fileSize > 0) {
         unsigned char buffer[512];
         size_t bytesRead;
         while ((bytesRead = file.read(buffer, sizeof(buffer))) > 0) {
             ftp.WriteData(buffer, bytesRead);
         }
     }
-
     ftp.CloseFile();
     file.close();
     DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán na FTP: " + localPath);
     return true;
 }
-
-
-
 
 void uploadAllFilesFromDirectoryWithLog(const String &baseDir) {
     DEBUG_PRINT("[" + getFormattedTime() + "] Prohledávám adresář: " + baseDir);
@@ -298,21 +290,22 @@ void uploadAllFilesFromDirectoryWithLog(const String &baseDir) {
 
     File file = dir.openNextFile();
     while (file) {
-        String fullPath = String(baseDir) + "/" + String(file.name()); // Sestavení absolutní cesty
+        String fullPath = String(baseDir) + "/" + String(file.name());
         if (file.isDirectory()) {
             DEBUG_PRINT("[" + getFormattedTime() + "] Nalezen podadresář: " + fullPath);
-            uploadAllFilesFromDirectoryWithLog(fullPath); // Rekurzivní volání s absolutní cestou
+            uploadAllFilesFromDirectoryWithLog(fullPath);
         } else {
-            if (isFileUploaded(fullPath)) {
-                DEBUG_PRINT("[" + getFormattedTime() + "] Soubor již byl nahrán, přeskočeno: " + fullPath);
-            } else {
+            time_t lastWriteTime = file.getLastWrite();
+            if (isFileOutdated(fullPath, lastWriteTime)) {
                 DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubor: " + fullPath);
                 if (uploadFileToFTP(fullPath)) {
-                    markFileAsUploaded(fullPath);
+                    markFileUpload(fullPath, lastWriteTime);
                     DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + fullPath);
                 } else {
                     DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + fullPath);
                 }
+            } else {
+                DEBUG_PRINT("[" + getFormattedTime() + "] Soubor nebyl aktualizován, přeskočeno: " + fullPath);
             }
         }
         file = dir.openNextFile();
