@@ -191,6 +191,7 @@ bool isFileOutdated(const String &filePath, time_t lastWriteTime) {
 
         if (loggedPath == filePath) {
             logFile.close();
+            DEBUG_PRINT("[" + getFormattedTime() + "] Soubor již nahrán: " + filePath);
             return lastWriteTime > loggedTime;
         }
     }
@@ -241,20 +242,9 @@ bool uploadFileToFTP(const String &localPath) {
     String directoryPath = remotePath.substring(0, lastSlash);
     String fileName = remotePath.substring(lastSlash + 1);
 
-    // Zajištění adresářů
-    ftp.ChangeWorkDir("/");
-    int start = 0;
-    while (true) {
-        int slash = directoryPath.indexOf('/', start);
-        String subDir = slash == -1 ? directoryPath.substring(start) : directoryPath.substring(start, slash);
-        if (subDir.isEmpty()) break;
-
-        ftp.InitFile("Type A"); // Přepnout na textový režim
-        ftp.MakeDir(subDir.c_str()); // Pokus o vytvoření adresáře
-        ftp.ChangeWorkDir(subDir.c_str()); // Přesun do adresáře
-
-        if (slash == -1) break;
-        start = slash + 1;
+    if (!ensureFTPDirectoryExists(ftp, directoryPath)) {
+        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zajistit adresář na FTP: " + directoryPath);
+        return false;
     }
 
     File file = FILE_SYSTEM.open(localPath, FILE_READ);
@@ -264,7 +254,7 @@ bool uploadFileToFTP(const String &localPath) {
     }
 
     size_t fileSize = file.size();
-    ftp.InitFile(fileSize == 0 ? "Type A" : "Type I"); // Typ souboru (text/binární)
+    ftp.InitFile(fileSize == 0 ? "Type A" : "Type I");
     ftp.NewFile(fileName.c_str());
     if (fileSize > 0) {
         unsigned char buffer[512];
@@ -278,6 +268,7 @@ bool uploadFileToFTP(const String &localPath) {
     DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán na FTP: " + localPath);
     return true;
 }
+
 
 void uploadAllFilesFromDirectoryWithLog(const String &baseDir) {
     DEBUG_PRINT("[" + getFormattedTime() + "] Prohledávám adresář: " + baseDir);
@@ -312,6 +303,32 @@ void uploadAllFilesFromDirectoryWithLog(const String &baseDir) {
     }
     dir.close();
 }
+
+bool ensureFTPDirectoryExists(ESP32_FTPClient &ftp, const String &path) {
+    ftp.ChangeWorkDir("/"); // Začít v root adresáři
+    int start = 0;
+
+    while (true) {
+        int slash = path.indexOf('/', start);
+        String subDir = (slash == -1) ? path.substring(start) : path.substring(start, slash);
+        if (subDir.isEmpty()) break;
+
+        DEBUG_PRINT("[" + getFormattedTime() + "] Zpracovávám adresář: " + subDir);
+
+        // Pokus o přechod do adresáře
+        ftp.InitFile("Type A");
+        ftp.ChangeWorkDir(subDir.c_str());
+
+        // Vytvoření adresáře, pokud přechod selhal
+        ftp.MakeDir(subDir.c_str());
+        ftp.ChangeWorkDir(subDir.c_str());
+
+        if (slash == -1) break;
+        start = slash + 1;
+    }
+    return true;
+}
+
 
 void taskMonthlyRestart(void *pvParameters) {
     static int lastMonth = -1; // Uchovává hodnotu posledního měsíce
@@ -369,7 +386,7 @@ void taskFTPTransfer(void *pvParameters) {
         uploadAllFilesFromDirectoryWithLog(DATA_DIR);
         DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubory z adresáře: " + CHART_DATA_DIR);
         uploadAllFilesFromDirectoryWithLog(CHART_DATA_DIR);
-        vTaskDelay(600000 / portTICK_PERIOD_MS); // 10 minut
+        vTaskDelay(1200000 / portTICK_PERIOD_MS); // 20 minut
     }
 }
 
