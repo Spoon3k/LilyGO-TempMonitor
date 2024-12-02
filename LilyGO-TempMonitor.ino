@@ -55,6 +55,16 @@ void initializeSD() {
     DEBUG_PRINT("[" + getFormattedTime() + "] SD karta úspěšně inicializována");
 }
 
+// Funkce pro získání cesty k souboru ve formátu /data/YYYYMMDD.json
+String getDataFilePath(const String &date) {
+    return "/data/" + date + ".json";
+}
+
+// Funkce pro získání cesty k souboru ve formátu /chartData/YYYYMMDD.json
+String getChartDataFilePath(const String &date) {
+    return "/chartData/" + date + ".json";
+}
+
 void clearUploadedFilesLog() {
     if (FILE_SYSTEM.exists("/uploaded_files.log")) {
         if (FILE_SYSTEM.remove("/uploaded_files.log")) {
@@ -132,22 +142,17 @@ void createAndSaveData(const String &basePath, bool includeSeconds = true) {
         return;
     }
 
+    // Sestavení názvu souboru ve formátu YYYYMMDD.json
     String year = String(timeinfo.tm_year + 1900);
     String month = (timeinfo.tm_mon < 9 ? "0" : "") + String(timeinfo.tm_mon + 1);
     String day = (timeinfo.tm_mday < 10 ? "0" : "") + String(timeinfo.tm_mday);
-    String filePath = basePath + "/" + year + "/" + month + "/" + day + ".json";
-
-    if (!ensureDirectoryExists(basePath) || 
-        !ensureDirectoryExists(basePath + "/" + year) ||
-        !ensureDirectoryExists(basePath + "/" + year + "/" + month)) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se zajistit adresářovou strukturu.");
-        return;
-    }
+    String filePath = basePath + "/" + year + month + day + ".json";
 
     const size_t capacity = JSON_OBJECT_SIZE(2) + JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(5) + 200;
     StaticJsonDocument<capacity> doc;
     doc["datum"] = year + "-" + month + "-" + day;
 
+    // Přidání času do JSON dokumentu
     String hour = (timeinfo.tm_hour < 10 ? "0" : "") + String(timeinfo.tm_hour);
     String minute = (timeinfo.tm_min < 10 ? "0" : "") + String(timeinfo.tm_min);
     if (includeSeconds) {
@@ -157,6 +162,7 @@ void createAndSaveData(const String &basePath, bool includeSeconds = true) {
         doc["cas"] = hour + ":" + minute;
     }
 
+    // Generování dat pro měření
     JsonArray mereni = doc.createNestedArray("mereni");
     JsonObject teplota = mereni.createNestedObject();
     teplota["teplota_senzor_1"] = random(-50, 101) + 0.1 * random(0, 10);
@@ -164,12 +170,14 @@ void createAndSaveData(const String &basePath, bool includeSeconds = true) {
     teplota["teplota_senzor_3"] = random(-50, 101) + 0.1 * random(0, 10);
     teplota["teplota_senzor_4"] = random(-50, 101) + 0.1 * random(0, 10);
 
+    // Otevření souboru pro zápis nebo vytvoření nového
     File file = FILE_SYSTEM.open(filePath, FILE_APPEND);
     if (!file) {
         DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se otevřít soubor: " + filePath);
         return;
     }
 
+    // Zápis dat do JSON souboru
     if (serializeJson(doc, file) == 0) {
         DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařil se zápis JSON do souboru.");
     } else {
@@ -178,6 +186,7 @@ void createAndSaveData(const String &basePath, bool includeSeconds = true) {
     }
     file.close();
 }
+
 
 void markFileUpload(const String &filePath, time_t lastWriteTime) {
     File logFile = FILE_SYSTEM.open("/uploaded_files.log", FILE_APPEND);
@@ -421,7 +430,7 @@ void setup() {
     xTaskCreatePinnedToCore(taskMonthlyRestart, "MonthlyRestart", 2048, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(taskSaveData, "SaveData", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(taskSaveChartData, "SaveChartData", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(taskFTPTransfer, "FTPTransfer", 8192, NULL, 1, NULL, 1);
+    //xTaskCreatePinnedToCore(taskFTPTransfer, "FTPTransfer", 8192, NULL, 1, NULL, 1);
 }
 
 void loop() {
