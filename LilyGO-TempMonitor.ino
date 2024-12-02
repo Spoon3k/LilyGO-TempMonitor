@@ -203,14 +203,11 @@ bool uploadFileToFTP(const String &localPath, const String &ftpBasePath) {
         return false;
     }
 
-    // Odvození vzdálené cesty na FTP
-    String fileName = localPath.substring(localPath.lastIndexOf('/') + 1);
-    String ftpPath = ftpBasePath + "/" + fileName;
-
     // Zajištění adresáře
-    DEBUG_PRINT("[" + getFormattedTime() + "] Zajišťuji adresář na FTP: " + ftpBasePath);
-    if (!ensureFTPDirectoryExists(ftp, ftpBasePath)) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zajistit adresář na FTP: " + ftpBasePath);
+    String fileName = localPath.substring(localPath.lastIndexOf('/') + 1);
+    String ftpDirectoryPath = ftpBasePath; // Základní cesta na FTP
+    if (!ensureFTPDirectoryExists(ftp, ftpDirectoryPath)) {
+        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zajistit adresář na FTP: " + ftpDirectoryPath);
         ftp.CloseConnection();
         return false;
     }
@@ -234,9 +231,10 @@ bool uploadFileToFTP(const String &localPath, const String &ftpBasePath) {
 
     ftp.CloseFile();
     ftp.CloseConnection();
-    DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + ftpPath);
+    DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + ftpBasePath + "/" + fileName);
     return true;
 }
+
 
 void taskFTPTransfer(void *pvParameters) {
     const int delayInterval = 15 * 60 * 1000 / portTICK_PERIOD_MS; // 15 minut
@@ -249,7 +247,6 @@ void taskFTPTransfer(void *pvParameters) {
             File file = dataDir.openNextFile();
             while (file) {
                 String localPath = String(DATA_DIR) + "/" + file.name();
-                DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubor: " + localPath);
                 if (!uploadFileToFTP(localPath, "/data")) {
                     DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + localPath);
                 }
@@ -266,7 +263,6 @@ void taskFTPTransfer(void *pvParameters) {
             File file = chartDataDir.openNextFile();
             while (file) {
                 String localPath = String(CHART_DATA_DIR) + "/" + file.name();
-                DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubor: " + localPath);
                 if (!uploadFileToFTP(localPath, "/chartData")) {
                     DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + localPath);
                 }
@@ -281,6 +277,7 @@ void taskFTPTransfer(void *pvParameters) {
         vTaskDelay(delayInterval);
     }
 }
+
 
 void taskMonthlyRestart(void *pvParameters) {
     static int lastMonth = -1; // Uchovává hodnotu posledního měsíce
