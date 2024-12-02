@@ -270,21 +270,21 @@ bool uploadFileToFTP(const String &localPath) {
     }
 
     size_t fileSize = file.size();
-    ftp.InitFile(fileSize == 0 ? "Type A" : "Type I");
-    ftp.NewFile(fileName.c_str());
+    ftp.InitFile(fileSize == 0 ? "Type A" : "Type I"); // Typ souboru
+    ftp.NewFile(fileName.c_str()); // Vytvoření nebo otevření souboru
     if (fileSize > 0) {
         unsigned char buffer[512];
         size_t bytesRead;
         while ((bytesRead = file.read(buffer, sizeof(buffer))) > 0) {
-            ftp.WriteData(buffer, bytesRead);
+            ftp.WriteData(buffer, bytesRead); // Přenos dat
         }
     }
-
     ftp.CloseFile();
     file.close();
     DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán na FTP: " + localPath);
     return true;
 }
+
 
 
 
@@ -323,7 +323,7 @@ void uploadAllFilesFromDirectoryWithLog(const String &baseDir) {
 }
 
 bool ensureFTPDirectoryExists(ESP32_FTPClient &ftp, const String &path) {
-    ftp.ChangeWorkDir("/"); // Začít v root adresáři
+    ftp.ChangeWorkDir("/"); // Začínáme od rootu FTP
     int start = 0;
 
     while (true) {
@@ -333,30 +333,27 @@ bool ensureFTPDirectoryExists(ESP32_FTPClient &ftp, const String &path) {
 
         DEBUG_PRINT("[" + getFormattedTime() + "] Zpracovávám adresář: " + subDir);
 
-        ftp.InitFile("Type A");
+        ftp.InitFile("Type A"); // Přepínáme na textový režim
         ftp.ChangeWorkDir(subDir.c_str()); // Pokus o přechod
-        if (!ftp.isConnected()) {
-            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Spojení s FTP bylo ztraceno.");
-            return false;
+
+        if (!ftp.isConnected()) { // Pokud přechod selže
+            DEBUG_PRINT("[" + getFormattedTime() + "] Adresář neexistuje, vytvářím: " + subDir);
+            ftp.MakeDir(subDir.c_str()); // Vytvoříme adresář
+            ftp.ChangeWorkDir(subDir.c_str()); // Pokus o znovu přechod
+            if (!ftp.isConnected()) {
+                DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze vytvořit nebo přejít do adresáře: " + subDir);
+                return false;
+            }
+        } else {
+            DEBUG_PRINT("[" + getFormattedTime() + "] Adresář existuje: " + subDir);
         }
-
-        DEBUG_PRINT("[" + getFormattedTime() + "] Přechod do adresáře: " + subDir);
-
-        // Pokud nelze přejít, pokusíme se vytvořit adresář
-        ftp.MakeDir(subDir.c_str());
-        ftp.ChangeWorkDir(subDir.c_str());
-        if (!ftp.isConnected()) {
-            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze vytvořit nebo přejít do adresáře: " + subDir);
-            return false;
-        }
-
-        DEBUG_PRINT("[" + getFormattedTime() + "] Adresář vytvořen nebo již existuje: " + subDir);
 
         if (slash == -1) break; // Konec cesty
         start = slash + 1;
     }
     return true;
 }
+
 
 void taskMonthlyRestart(void *pvParameters) {
     static int lastMonth = -1; // Uchovává hodnotu posledního měsíce
