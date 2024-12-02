@@ -77,19 +77,6 @@ void clearUploadedFilesLog() {
     }
 }
 
-
-
-bool ensureDirectoryExists(const String &path) {
-    if (!FILE_SYSTEM.exists(path)) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] Vytvářím adresář: " + path);
-        if (!FILE_SYSTEM.mkdir(path)) {
-            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se vytvořit adresář: " + path);
-            return false;
-        }
-    }
-    return true;
-}
-
 bool appendToFile(const String &filePath, const String &data) {
     File file = FILE_SYSTEM.open(filePath, FILE_APPEND);
     if (!file) {
@@ -146,7 +133,8 @@ void createAndSaveData(const String &basePath, bool includeSeconds = true) {
     String year = String(timeinfo.tm_year + 1900);
     String month = (timeinfo.tm_mon < 9 ? "0" : "") + String(timeinfo.tm_mon + 1);
     String day = (timeinfo.tm_mday < 10 ? "0" : "") + String(timeinfo.tm_mday);
-    String filePath = basePath + "/" + year + month + day + ".json";
+    String fileName = year + month + day + ".json";
+    String filePath = basePath + "/" + fileName;
 
     const size_t capacity = JSON_OBJECT_SIZE(2) + JSON_ARRAY_SIZE(1) + JSON_OBJECT_SIZE(5) + 200;
     StaticJsonDocument<capacity> doc;
@@ -184,75 +172,29 @@ void createAndSaveData(const String &basePath, bool includeSeconds = true) {
         file.println();
         DEBUG_PRINT("[" + getFormattedTime() + "] [ÚSPĚCH] JSON data uložena do souboru: " + filePath);
     }
+
     file.close();
 }
 
+bool ensureFTPDirectoryExists(ESP32_FTPClient &ftp, const String &path) {
+    ftp.ChangeWorkDir("/"); // Začněte v root adresáři
+    int start = 0;
+    while (true) {
+        int slash = path.indexOf('/', start);
+        String subDir = (slash == -1) ? path.substring(start) : path.substring(start, slash);
+        if (subDir.isEmpty()) break;
 
-void markFileUpload(const String &filePath, time_t lastWriteTime) {
-    File logFile = FILE_SYSTEM.open("/uploaded_files.log", FILE_APPEND);
-    if (!logFile) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zapsat do logovacího souboru.");
-        return;
+        ftp.MakeDir(subDir.c_str());  // Vytvoření adresáře
+        ftp.ChangeWorkDir(subDir.c_str());  // Přechod do adresáře
+        DEBUG_PRINT("[" + getFormattedTime() + "] Kontrola adresáře na FTP: " + subDir);
+
+        if (slash == -1) break;
+        start = slash + 1;
     }
-    logFile.println(filePath + "\t" + String(lastWriteTime));
-    logFile.close();
-    DEBUG_PRINT("[" + getFormattedTime() + "] Zaznamenán přenos souboru: " + filePath);
-}
-
-
-bool isFileOutdated(const String &filePath, time_t lastWriteTime) {
-    File logFile = FILE_SYSTEM.open("/uploaded_files.log", FILE_READ);
-    if (!logFile) return true;
-
-    while (logFile.available()) {
-        String line = logFile.readStringUntil('\n');
-        int separator = line.indexOf('\t');
-        if (separator == -1) continue;
-
-        String loggedPath = line.substring(0, separator);
-        time_t loggedTime = atol(line.substring(separator + 1).c_str());
-
-        if (loggedPath == filePath) {
-            logFile.close();
-            DEBUG_PRINT("[" + getFormattedTime() + "] Soubor již nahrán: " + filePath);
-            return lastWriteTime > loggedTime;
-        }
-    }
-    logFile.close();
     return true;
 }
 
-void uploadFileWithTimestampCheck(const String &filePath, const String &ftpPath) {
-    File file = FILE_SYSTEM.open(filePath, FILE_READ);
-    if (!file) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze otevřít soubor: " + filePath);
-        return;
-    }
-
-    time_t lastWriteTime = file.getLastWrite();
-    file.close();
-
-    if (isFileOutdated(filePath, lastWriteTime)) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším aktualizovaný soubor: " + filePath);
-        if (uploadFileToFTP(filePath, ftpPath)) {
-            markFileUpload(filePath, lastWriteTime);
-            DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + filePath);
-        } else {
-            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + filePath);
-        }
-    } else {
-        DEBUG_PRINT("[" + getFormattedTime() + "] Soubor nebyl aktualizován, přeskočeno: " + filePath);
-    }
-}
-
-
-
-bool uploadFileToFTP(const String &localPath, const String &ftpPath) {
-    if (localPath.isEmpty()) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze nahrát prázdný soubor.");
-        return false;
-    }
-
+bool uploadFileToFTP(const String &localPath, const String &ftpBasePath) {
     ESP32_FTPClient ftp(FTP_HOST, FTP_USER, FTP_PASSWORD);
     ftp.OpenConnection();
 
@@ -261,101 +203,84 @@ bool uploadFileToFTP(const String &localPath, const String &ftpPath) {
         return false;
     }
 
-    int lastSlash = ftpPath.lastIndexOf('/');
-    String directoryPath = ftpPath.substring(0, lastSlash);
-    String fileName = ftpPath.substring(lastSlash + 1);
+    // Odvození vzdálené cesty na FTP
+    String fileName = localPath.substring(localPath.lastIndexOf('/') + 1);
+    String ftpPath = ftpBasePath + "/" + fileName;
 
-    if (!ensureFTPDirectoryExists(ftp, directoryPath)) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zajistit adresář na FTP: " + directoryPath);
+    // Zajištění adresáře
+    DEBUG_PRINT("[" + getFormattedTime() + "] Zajišťuji adresář na FTP: " + ftpBasePath);
+    if (!ensureFTPDirectoryExists(ftp, ftpBasePath)) {
+        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze zajistit adresář na FTP: " + ftpBasePath);
+        ftp.CloseConnection();
         return false;
     }
 
+    // Přenos souboru
     File file = FILE_SYSTEM.open(localPath, FILE_READ);
     if (!file) {
         DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze otevřít soubor: " + localPath);
+        ftp.CloseConnection();
         return false;
     }
 
-    size_t fileSize = file.size();
-    ftp.InitFile(fileSize == 0 ? "Type A" : "Type I");
+    ftp.InitFile("Type A");
     ftp.NewFile(fileName.c_str());
-    if (fileSize > 0) {
-        unsigned char buffer[512];
-        size_t bytesRead;
-        while ((bytesRead = file.read(buffer, sizeof(buffer))) > 0) {
-            ftp.WriteData(buffer, bytesRead);
-        }
+    while (file.available()) {
+        String line = file.readStringUntil('\n');
+        ftp.Write(line.c_str());
+        ftp.Write("\r\n");
     }
-    ftp.CloseFile();
     file.close();
-    DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán na FTP: " + localPath);
+
+    ftp.CloseFile();
+    ftp.CloseConnection();
+    DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + ftpPath);
     return true;
 }
 
-void uploadAllFilesFromDirectoryWithLog(const String &baseDir, const String &ftpBasePath) {
-    DEBUG_PRINT("[" + getFormattedTime() + "] Prohledávám adresář: " + baseDir);
-
-    File dir = FILE_SYSTEM.open(baseDir);
-    if (!dir || !dir.isDirectory()) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Adresář neexistuje nebo není adresář: " + baseDir);
-        return;
-    }
-
-    File file = dir.openNextFile();
-    while (file) {
-        String fullPath = baseDir + "/" + file.name();
-        String ftpPath = ftpBasePath + "/" + file.name();
-
-        if (file.isDirectory()) {
-            DEBUG_PRINT("[" + getFormattedTime() + "] Nalezen podadresář: " + fullPath);
-            uploadAllFilesFromDirectoryWithLog(fullPath, ftpPath); // Rekurzivní volání s podadresářem
-        } else {
-            DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubor: " + fullPath);
-            if (uploadFileToFTP(fullPath, ftpPath)) {
-                markFileUpload(fullPath, file.getLastWrite());
-                DEBUG_PRINT("[" + getFormattedTime() + "] Soubor úspěšně nahrán: " + fullPath);
-            } else {
-                DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + fullPath);
-            }
-        }
-        file = dir.openNextFile();
-    }
-    dir.close();
-}
-
-
-bool ensureFTPDirectoryExists(ESP32_FTPClient &ftp, const String &path) {
-    ftp.ChangeWorkDir("/"); // Začínáme od rootu FTP
-    int start = 0;
-
+void taskFTPTransfer(void *pvParameters) {
+    const int delayInterval = 15 * 60 * 1000 / portTICK_PERIOD_MS; // 15 minut
     while (true) {
-        int slash = path.indexOf('/', start);
-        String subDir = (slash == -1) ? path.substring(start) : path.substring(start, slash);
-        if (subDir.isEmpty()) break;
+        DEBUG_PRINT("[" + getFormattedTime() + "] Spouštím přenos souborů na FTP.");
 
-        DEBUG_PRINT("[" + getFormattedTime() + "] Zpracovávám adresář: " + subDir);
-
-        ftp.InitFile("Type A");
-        ftp.ChangeWorkDir(subDir.c_str()); // Pokus o přechod
-        if (!ftp.isConnected()) { // Pokud přechod selže
-            DEBUG_PRINT("[" + getFormattedTime() + "] Adresář neexistuje, vytvářím: " + subDir);
-            ftp.MakeDir(subDir.c_str()); // Vytvoříme adresář
-            ftp.ChangeWorkDir(subDir.c_str()); // Znovu se pokusíme přejít
-            if (!ftp.isConnected()) {
-                DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze vytvořit nebo přejít do adresáře: " + subDir);
-                return false;
+        // Přenos souborů z DATA_DIR
+        File dataDir = FILE_SYSTEM.open(DATA_DIR);
+        if (dataDir && dataDir.isDirectory()) {
+            File file = dataDir.openNextFile();
+            while (file) {
+                String localPath = String(DATA_DIR) + "/" + file.name();
+                DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubor: " + localPath);
+                if (!uploadFileToFTP(localPath, "/data")) {
+                    DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + localPath);
+                }
+                file = dataDir.openNextFile();
             }
+            dataDir.close();
         } else {
-            DEBUG_PRINT("[" + getFormattedTime() + "] Adresář existuje: " + subDir);
+            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze otevřít adresář: " + String(DATA_DIR));
         }
 
-        if (slash == -1) break; // Konec cesty
-        start = slash + 1;
+        // Přenos souborů z CHART_DATA_DIR
+        File chartDataDir = FILE_SYSTEM.open(CHART_DATA_DIR);
+        if (chartDataDir && chartDataDir.isDirectory()) {
+            File file = chartDataDir.openNextFile();
+            while (file) {
+                String localPath = String(CHART_DATA_DIR) + "/" + file.name();
+                DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubor: " + localPath);
+                if (!uploadFileToFTP(localPath, "/chartData")) {
+                    DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nepodařilo se nahrát soubor: " + localPath);
+                }
+                file = chartDataDir.openNextFile();
+            }
+            chartDataDir.close();
+        } else {
+            DEBUG_PRINT("[" + getFormattedTime() + "] [CHYBA] Nelze otevřít adresář: " + String(CHART_DATA_DIR));
+        }
+
+        DEBUG_PRINT("[" + getFormattedTime() + "] Přenos souborů dokončen. Čekám 15 minut.");
+        vTaskDelay(delayInterval);
     }
-    return true;
 }
-
-
 
 void taskMonthlyRestart(void *pvParameters) {
     static int lastMonth = -1; // Uchovává hodnotu posledního měsíce
@@ -407,17 +332,6 @@ void taskSaveChartData (void *pvParameters) {
     }
 }
 
-void taskFTPTransfer(void *pvParameters) {
-    while (true) {
-        DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubory z adresáře: " + DATA_DIR);
-        uploadAllFilesFromDirectoryWithLog(DATA_DIR, "data");
-        DEBUG_PRINT("[" + getFormattedTime() + "] Přenáším soubory z adresáře: " + CHART_DATA_DIR);
-        uploadAllFilesFromDirectoryWithLog(CHART_DATA_DIR, "chartData");
-        vTaskDelay(600000 / portTICK_PERIOD_MS); // 10 minut
-    }
-}
-
-
 void setup() {
     Serial.begin(115200);
     initializeSD();
@@ -430,7 +344,7 @@ void setup() {
     xTaskCreatePinnedToCore(taskMonthlyRestart, "MonthlyRestart", 2048, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(taskSaveData, "SaveData", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(taskSaveChartData, "SaveChartData", 4096, NULL, 1, NULL, 1);
-    //xTaskCreatePinnedToCore(taskFTPTransfer, "FTPTransfer", 8192, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(taskFTPTransfer, "taskFTPTransfer", 8192, NULL, 1, NULL, 1);
 }
 
 void loop() {
